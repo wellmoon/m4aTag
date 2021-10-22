@@ -19,28 +19,29 @@ type TagInfo struct {
 	Comment string
 }
 
-//ftyp
-//moov
-//- mvhd
-//- trak
-//-  - tkhd
-//-  - edts
-//-  - mdia
-//- udta
-//-  - meta
-//			hdlr
-//			ilst
-//				----
-//				)ART
-//					data
-//				)nam
-//					data
-//				)alb
-//					data
-//				)too
-//free
-//mdat
+// createNewFile : true-rewrite old file, false-rename old file with .old suffix
 func UpdateM4aTag(createNewFile bool, filePath string, title string, artist string, album string, comment string, picPath string) {
+	//ftyp
+	//moov
+	//- mvhd
+	//- trak
+	//-  - tkhd
+	//-  - edts
+	//-  - mdia
+	//- udta
+	//-  - meta
+	//			hdlr
+	//			ilst
+	//				----
+	//				)ART
+	//					data
+	//				)nam
+	//					data
+	//				)alb
+	//					data
+	//				)too
+	//free
+	//mdat
 	f, err := os.Open(filePath)
 	if err != nil {
 		panic("open m4a file error")
