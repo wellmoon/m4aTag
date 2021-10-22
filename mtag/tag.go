@@ -3,11 +3,9 @@ package mtag
 import (
 	"bytes"
 	"errors"
-	"fmt"
 	"io"
 	"io/ioutil"
 	"os"
-	"strconv"
 )
 
 type TagInfo struct {
@@ -135,7 +133,6 @@ func readAtoms(r io.ReadSeeker, filePath string, tagInfo TagInfo, createNewFile 
 			if tag == "meta" {
 				metaSize = tagSize
 			}
-			fmt.Println(tag + " size : " + strconv.Itoa(tagSize))
 			r.Seek(int64(tagSize-8), io.SeekCurrent)
 		}
 	}
@@ -184,24 +181,16 @@ func readAtoms(r io.ReadSeeker, filePath string, tagInfo TagInfo, createNewFile 
 	return nil
 }
 
-func printBuf(buf ...*bytes.Buffer) {
-	return
-}
-
 func modifyStco(trakBuf *bytes.Buffer, diff int) *bytes.Buffer {
 	if diff == 0 {
 		return trakBuf
 	}
-	fmt.Println("diff : " + strconv.Itoa(diff))
 	// modify stco
 	tempBytes := trakBuf.Bytes()
 	idx := bytes.Index(tempBytes, []byte("stco"))
 
-	stcoLen := getInt(tempBytes[idx-4 : idx])
-	fmt.Printf("old stco : %v\n", tempBytes[idx:idx+stcoLen-8])
 	idx = idx + 8
 	truckNum := getInt(tempBytes[idx : idx+4])
-	// fmt.Println("truckNum : " + strconv.Itoa(truckNum))
 	idx = idx + 4
 	for i := 0; i < truckNum; i++ {
 		oldLen := getInt(tempBytes[idx : idx+4])
@@ -213,19 +202,9 @@ func modifyStco(trakBuf *bytes.Buffer, diff int) *bytes.Buffer {
 		idx = idx + 4
 	}
 
-	// fmt.Println(strconv.Itoa(getInt([]byte{0x00, 0x00, 0x9F, 0x48})))
-	// fmt.Println(strconv.Itoa(getInt([]byte{0x00, 0x10, 0x9E, 0x1B})))
-	// fmt.Println(strconv.Itoa(getInt([]byte{0x00, 0x20, 0x9D, 0x44})))
 	newBuf := bytes.NewBuffer(tempBytes)
-	idx = bytes.Index(tempBytes, []byte("stco"))
-	fmt.Printf("new stco : %v\n", tempBytes[idx:idx+stcoLen-8])
 	return newBuf
 }
-
-// func createMoov(mvhd *bytes.Buffer, trak *bytes.Buffer, tagInfo TagInfo) (*bytes.Buffer, int) {
-
-// 	return moovBuf, metaSize
-// }
 
 func createUdta(tagInfo TagInfo) (*bytes.Buffer, int) {
 	meta := createMeta(tagInfo)
@@ -266,7 +245,6 @@ func createMeta(tagInfo TagInfo) *bytes.Buffer {
 	if covrBuf != nil {
 		ilstLenth = ilstLenth + covrBuf.Len()
 	}
-	fmt.Println("ilst length : " + strconv.Itoa(ilstLenth))
 	ilstBuf := bytes.NewBuffer(int2Bytes(ilstLenth))
 	ilstBuf.WriteString("ilst")
 	ilstBuf.Write(___buf.Bytes())
@@ -278,10 +256,6 @@ func createMeta(tagInfo TagInfo) *bytes.Buffer {
 	ilstBuf.Write(nameBuf.Bytes())
 	ilstBuf.Write(commentBuf.Bytes())
 	ilstBuf.Write(tooBuf.Bytes())
-
-	// tempLen := hdlrBuf.Len() + ilstLenth + 12
-	// freeLen := 1077 - tempLen
-	// freeBuf := createFree(freeLen)
 
 	metaLength := hdlrBuf.Len() + ilstLenth + 12
 	metaBuf := bytes.NewBuffer(int2Bytes(metaLength))
