@@ -3,6 +3,7 @@ package mtag
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"os"
@@ -17,8 +18,13 @@ type TagInfo struct {
 	Comment string
 }
 
+type TagBufInfo struct {
+	TagName string
+	Buf     *bytes.Buffer
+}
+
 // createNewFile : true-rewrite old file, false-rename old file with .old suffix
-func UpdateM4aTag(createNewFile bool, filePath string, title string, artist string, album string, comment string, picPath string) {
+func UpdateM4aTag(createNewFile bool, filePath string, title string, artist string, album string, comment string, picPath string) error {
 	//ftyp
 	//moov
 	//- mvhd
@@ -40,22 +46,22 @@ func UpdateM4aTag(createNewFile bool, filePath string, title string, artist stri
 	//				)too
 	//free
 	//mdat
-	f, err := os.Open(filePath)
+	file, err := os.Open(filePath)
 	if err != nil {
 		panic("open m4a file error")
 	}
-	defer f.Close()
+	defer file.Close()
 
-	b, err := readBytes(f, 11)
+	b, err := readBytes(file, 11)
 	if err != nil {
-		return
+		return err
 	}
-	_, err = f.Seek(-11, io.SeekCurrent)
+	_, err = file.Seek(-11, io.SeekCurrent)
 	if err != nil {
-		return
+		return err
 	}
 	if string(b[4:8]) != "ftyp" {
-		return
+		return err
 	}
 	tagInfo := &TagInfo{}
 	tagInfo.Artist = artist
@@ -63,7 +69,82 @@ func UpdateM4aTag(createNewFile bool, filePath string, title string, artist stri
 	tagInfo.PicPath = picPath
 	tagInfo.Album = album
 	tagInfo.Comment = comment
-	readAtoms(f, filePath, *tagInfo, createNewFile)
+	list, err := splitTopTag(file)
+	if err != nil {
+		fmt.Println("split err")
+		return err
+	}
+
+	if createNewFile {
+		err = os.Remove(filePath)
+	} else {
+		err = os.Rename(filePath, filePath+".old")
+	}
+
+	if err != nil {
+		fmt.Println("Remove err")
+		return err
+	}
+	f, err := os.Create(filePath)
+	if err != nil {
+		fmt.Println("Create err")
+		return err
+	}
+	defer f.Close()
+	mdat := ""
+	for _, tagb := range list {
+		tag := tagb.TagName
+		buf := tagb.Buf
+		if tag == "mdat" {
+			mdat = "mdat"
+		}
+		if tag == "moov" {
+			needUpdateStco := false
+			if len(mdat) == 0 {
+				// mdat tag after moov tag, need update stco
+				needUpdateStco = true
+			}
+			buf, err = createMoov(buf, filePath, *tagInfo, createNewFile, needUpdateStco)
+			if err != nil {
+				fmt.Println("create moov err")
+				return err
+			}
+		}
+		_, err = f.Write(buf.Bytes())
+		if err != nil {
+			fmt.Println("write buf err")
+			return err
+		}
+	}
+	return nil
+}
+
+func splitTopTag(r io.ReadSeeker) ([]*TagBufInfo, error) {
+	var cBuf []byte = make([]byte, 4)
+	var tagSize int
+	var err error
+	var tagBufInfo *TagBufInfo
+	var tagBuf *bytes.Buffer
+	list := make([]*TagBufInfo, 0)
+	for {
+		tagSize, err = readInt(r)
+		if err != nil {
+			break
+		}
+		_, err = io.ReadFull(r, cBuf)
+		if err != nil {
+			return nil, err
+		}
+		tagBufInfo = &TagBufInfo{}
+		tagBufInfo.TagName = string(cBuf)
+		tagBuf, err = createBufByTag(r, cBuf, tagSize)
+		if err != nil {
+			return nil, err
+		}
+		tagBufInfo.Buf = tagBuf
+		list = append(list, tagBufInfo)
+	}
+	return list, nil
 }
 
 func createBufByTag(r io.ReadSeeker, tagName []byte, tagSize int) (*bytes.Buffer, error) {
@@ -78,55 +159,40 @@ func createBufByTag(r io.ReadSeeker, tagName []byte, tagSize int) (*bytes.Buffer
 	return b, nil
 }
 
-func readAtoms(r io.ReadSeeker, filePath string, tagInfo TagInfo, createNewFile bool) error {
+func createMoov(moov *bytes.Buffer, filePath string, tagInfo TagInfo, createNewFile bool, needUpdateStco bool) (*bytes.Buffer, error) {
 	var cBuf []byte = make([]byte, 4)
 	var tagSize int
 	var err error
 	var tag string
 
-	var ftypBuf *bytes.Buffer
 	var mvhdBuf *bytes.Buffer
 	var trakBuf *bytes.Buffer
-	var mdatBuf *bytes.Buffer
 	var metaSize int
+	r := bytes.NewReader(moov.Bytes())
 	for {
 		tagSize, err = readInt(r)
 		if err != nil {
-			return err
+			break
 		}
+
 		_, err = io.ReadFull(r, cBuf)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		tag = string(cBuf)
-		if tag == "ftyp" {
-			ftypBuf, err = createBufByTag(r, cBuf, tagSize)
-			if err != nil {
-				return err
-			}
-			continue
-		} else if tag == "moov" {
-			// create new moov tag
-			continue
-		} else if tag == "mvhd" {
+		if tag == "mvhd" {
 			mvhdBuf, err = createBufByTag(r, cBuf, tagSize)
 			if err != nil {
-				return err
+				return nil, err
 			}
 			continue
 		} else if tag == "trak" {
 			trakBuf, err = createBufByTag(r, cBuf, tagSize)
 			if err != nil {
-				return err
+				return nil, err
 			}
 			continue
-		} else if tag == "mdat" {
-			mdatBuf, err = createBufByTag(r, cBuf, tagSize)
-			if err != nil {
-				return err
-			}
-			break
-		} else if tag == "udta" {
+		} else if tag == "udta" || tag == "moov" {
 			continue
 		} else {
 			// skip this tag
@@ -136,49 +202,17 @@ func readAtoms(r io.ReadSeeker, filePath string, tagInfo TagInfo, createNewFile 
 			r.Seek(int64(tagSize-8), io.SeekCurrent)
 		}
 	}
-
 	udtaBuf, newMetaSize := createUdta(tagInfo)
-	trakBuf = modifyStco(trakBuf, newMetaSize-metaSize)
-
+	if needUpdateStco {
+		trakBuf = modifyStco(trakBuf, newMetaSize-metaSize)
+	}
 	moovLength := mvhdBuf.Len() + trakBuf.Len() + udtaBuf.Len() + 8
 	moovBuf := bytes.NewBuffer(int2Bytes(moovLength))
 	moovBuf.WriteString("moov")
 	moovBuf.Write(mvhdBuf.Bytes())
 	moovBuf.Write(trakBuf.Bytes())
 	moovBuf.Write(udtaBuf.Bytes())
-
-	if createNewFile {
-		err = os.Remove(filePath)
-	} else {
-		os.Rename(filePath, filePath+".old")
-	}
-
-	if err != nil {
-		return err
-	}
-	f, err := os.Create(filePath)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	freeBuf := createFree(8)
-	_, err = f.Write(ftypBuf.Bytes())
-	if err != nil {
-		return err
-	}
-	_, err = f.Write(moovBuf.Bytes())
-	if err != nil {
-		return err
-	}
-	_, err = f.Write(freeBuf.Bytes())
-	if err != nil {
-		return err
-	}
-	_, err = f.Write(mdatBuf.Bytes())
-	if err != nil {
-		return err
-	}
-	return nil
+	return moovBuf, nil
 }
 
 func modifyStco(trakBuf *bytes.Buffer, diff int) *bytes.Buffer {
@@ -238,10 +272,10 @@ func createMeta(tagInfo TagInfo) *bytes.Buffer {
 	___buf.Write(subNameBuf.Bytes())
 	___buf.Write(subDataBuf.Bytes())
 
-	tooBuf := createCopyTag("too", []byte("Lavf57.83.100"))
+	// tooBuf := createCopyTag("too", []byte("Lavf57.83.100"))
 	hdlrBuf := createHdlr()
 
-	ilstLenth := ___length + artistBuf.Len() + nameBuf.Len() + albumBuf.Len() + commentBuf.Len() + tooBuf.Len() + 8
+	ilstLenth := ___length + artistBuf.Len() + nameBuf.Len() + albumBuf.Len() + commentBuf.Len() + 8
 	if covrBuf != nil {
 		ilstLenth = ilstLenth + covrBuf.Len()
 	}
@@ -255,7 +289,7 @@ func createMeta(tagInfo TagInfo) *bytes.Buffer {
 	ilstBuf.Write(albumBuf.Bytes())
 	ilstBuf.Write(nameBuf.Bytes())
 	ilstBuf.Write(commentBuf.Bytes())
-	ilstBuf.Write(tooBuf.Bytes())
+	// ilstBuf.Write(tooBuf.Bytes())
 
 	metaLength := hdlrBuf.Len() + ilstLenth + 12
 	metaBuf := bytes.NewBuffer(int2Bytes(metaLength))
