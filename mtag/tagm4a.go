@@ -6,6 +6,7 @@ import (
 	"io"
 	"io/ioutil"
 	"os"
+	"strings"
 )
 
 type TagInfo struct {
@@ -113,7 +114,7 @@ func UpdateM4aTag(createNewFile bool, filePath string, title string, artist stri
 	return nil
 }
 
-func Read(filePath string) (*TagInfo, error) {
+func ReadM4aTag(filePath string) (*TagInfo, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
 		panic("open m4a file error")
@@ -316,7 +317,7 @@ func getValue(buf []byte) string {
 			if err != nil {
 				return ""
 			}
-			return string(tmp)
+			return strings.TrimSpace(string((tmp)))
 		} else {
 			r.Seek(int64(tagSize-8), io.SeekCurrent)
 		}
