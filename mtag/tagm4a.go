@@ -312,7 +312,8 @@ func getValue(buf []byte) string {
 		}
 		tag = string(cBuf)
 		if tag == "data" {
-			tmp := make([]byte, tagSize-8)
+			tmp := make([]byte, tagSize-8-8)
+			r.Seek(int64(8), io.SeekCurrent)
 			_, err = io.ReadFull(r, tmp)
 			if err != nil {
 				return ""
