@@ -3,7 +3,6 @@ package mtag
 import (
 	"bytes"
 	"errors"
-	"fmt"
 	"io"
 	"io/ioutil"
 	"os"
@@ -61,7 +60,7 @@ func UpdateM4aTag(createNewFile bool, filePath string, title string, artist stri
 		return err
 	}
 	if string(b[4:8]) != "ftyp" {
-		return err
+		return errors.New("not support this file type")
 	}
 	tagInfo := &TagInfo{}
 	tagInfo.Artist = artist
@@ -71,7 +70,6 @@ func UpdateM4aTag(createNewFile bool, filePath string, title string, artist stri
 	tagInfo.Comment = comment
 	list, err := splitTopTag(file)
 	if err != nil {
-		fmt.Println("split err")
 		return err
 	}
 
@@ -82,12 +80,10 @@ func UpdateM4aTag(createNewFile bool, filePath string, title string, artist stri
 	}
 
 	if err != nil {
-		fmt.Println("Remove err")
 		return err
 	}
 	f, err := os.Create(filePath)
 	if err != nil {
-		fmt.Println("Create err")
 		return err
 	}
 	defer f.Close()
@@ -106,17 +102,52 @@ func UpdateM4aTag(createNewFile bool, filePath string, title string, artist stri
 			}
 			buf, err = createMoov(buf, filePath, *tagInfo, createNewFile, needUpdateStco)
 			if err != nil {
-				fmt.Println("create moov err")
 				return err
 			}
 		}
 		_, err = f.Write(buf.Bytes())
 		if err != nil {
-			fmt.Println("write buf err")
 			return err
 		}
 	}
 	return nil
+}
+
+func Read(filePath string) (*TagInfo, error) {
+	file, err := os.Open(filePath)
+	if err != nil {
+		panic("open m4a file error")
+	}
+	defer file.Close()
+
+	b, err := readBytes(file, 11)
+	if err != nil {
+		return nil, err
+	}
+	_, err = file.Seek(-11, io.SeekCurrent)
+	if err != nil {
+		return nil, err
+	}
+	if string(b[4:8]) != "ftyp" {
+		return nil, errors.New("not support this file type")
+	}
+	list, err := splitTopTag(file)
+	if err != nil {
+		return nil, err
+	}
+
+	var moov *TagBufInfo
+	for _, tag := range list {
+		if tag.TagName != "moov" {
+			continue
+		}
+		moov = tag
+	}
+
+	if moov == nil {
+		return nil, errors.New("parse error")
+	}
+	return getMetaFromMoov(moov.Buf)
 }
 
 func splitTopTag(r io.ReadSeeker) ([]*TagBufInfo, error) {
@@ -213,6 +244,83 @@ func createMoov(moov *bytes.Buffer, filePath string, tagInfo TagInfo, createNewF
 	moovBuf.Write(trakBuf.Bytes())
 	moovBuf.Write(udtaBuf.Bytes())
 	return moovBuf, nil
+}
+
+func getMetaFromMoov(moov *bytes.Buffer) (*TagInfo, error) {
+	var cBuf []byte = make([]byte, 4)
+	var tagSize int
+	var err error
+	var tag string
+
+	var result *TagInfo = &TagInfo{}
+	r := bytes.NewReader(moov.Bytes())
+	for {
+		tagSize, err = readInt(r)
+		if err != nil {
+			break
+		}
+		if tagSize == 0 {
+			break
+		}
+		_, err = io.ReadFull(r, cBuf)
+		if err != nil {
+			return nil, err
+		}
+		tag = string(cBuf)
+		if tag == "moov" ||
+			tag == "udta" ||
+			tag == "ilst" {
+			continue
+		} else if tag == "meta" {
+			r.Seek(int64(4), io.SeekCurrent)
+			continue
+		} else if cBuf[0] == byte(0xA9) {
+			tmp := make([]byte, tagSize-8)
+			io.ReadFull(r, tmp)
+			if cBuf[1] == 'a' && cBuf[2] == 'l' && cBuf[3] == 'b' {
+				result.Album = getValue(tmp)
+			} else if cBuf[1] == 'A' && cBuf[2] == 'R' && cBuf[3] == 'T' {
+				result.Artist = getValue(tmp)
+			} else if cBuf[1] == 'n' && cBuf[2] == 'a' && cBuf[3] == 'm' {
+				result.Name = getValue(tmp)
+			} else if cBuf[1] == 'c' && cBuf[2] == 'm' && cBuf[3] == 't' {
+				result.Comment = getValue(tmp)
+			}
+			continue
+		} else {
+			r.Seek(int64(tagSize-8), io.SeekCurrent)
+		}
+	}
+	return result, nil
+}
+
+func getValue(buf []byte) string {
+	var cBuf []byte = make([]byte, 4)
+	var tagSize int
+	var err error
+	var tag string
+	r := bytes.NewReader(buf)
+	for {
+		tagSize, err = readInt(r)
+		if err != nil {
+			return ""
+		}
+		_, err = io.ReadFull(r, cBuf)
+		if err != nil {
+			return ""
+		}
+		tag = string(cBuf)
+		if tag == "data" {
+			tmp := make([]byte, tagSize-8)
+			_, err = io.ReadFull(r, tmp)
+			if err != nil {
+				return ""
+			}
+			return string(tmp)
+		} else {
+			r.Seek(int64(tagSize-8), io.SeekCurrent)
+		}
+	}
 }
 
 func modifyStco(trakBuf *bytes.Buffer, diff int) *bytes.Buffer {
