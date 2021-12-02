@@ -69,7 +69,7 @@ func UpdateM4aTag(createNewFile bool, filePath string, title string, artist stri
 	tagInfo.PicPath = picPath
 	tagInfo.Album = album
 	tagInfo.Comment = comment
-	list, err := splitTopTag(file)
+	list, err := SplitTopTag(file)
 	if err != nil {
 		return err
 	}
@@ -132,7 +132,7 @@ func ReadM4aTag(filePath string) (*TagInfo, error) {
 	if string(b[4:8]) != "ftyp" {
 		return nil, errors.New("not support this file type")
 	}
-	list, err := splitTopTag(file)
+	list, err := SplitTopTag(file)
 	if err != nil {
 		return nil, err
 	}
@@ -151,7 +151,7 @@ func ReadM4aTag(filePath string) (*TagInfo, error) {
 	return getMetaFromMoov(moov.Buf)
 }
 
-func splitTopTag(r io.ReadSeeker) ([]*TagBufInfo, error) {
+func SplitTopTag(r io.ReadSeeker) ([]*TagBufInfo, error) {
 	var cBuf []byte = make([]byte, 4)
 	var tagSize int
 	var err error
@@ -201,6 +201,7 @@ func createMoov(moov *bytes.Buffer, filePath string, tagInfo TagInfo, createNewF
 	var trakBuf *bytes.Buffer
 	var metaSize int
 	r := bytes.NewReader(moov.Bytes())
+	list := make([]*TagBufInfo, 0)
 	for {
 		tagSize, err = readInt(r)
 		if err != nil {
@@ -217,12 +218,14 @@ func createMoov(moov *bytes.Buffer, filePath string, tagInfo TagInfo, createNewF
 			if err != nil {
 				return nil, err
 			}
+			list = append(list, &TagBufInfo{tag, mvhdBuf})
 			continue
 		} else if tag == "trak" {
 			trakBuf, err = createBufByTag(r, cBuf, tagSize)
 			if err != nil {
 				return nil, err
 			}
+			list = append(list, &TagBufInfo{tag, trakBuf})
 			continue
 		} else if tag == "udta" || tag == "moov" {
 			continue
@@ -231,18 +234,37 @@ func createMoov(moov *bytes.Buffer, filePath string, tagInfo TagInfo, createNewF
 			if tag == "meta" {
 				metaSize = tagSize
 			}
-			r.Seek(int64(tagSize-8), io.SeekCurrent)
+			// r.Seek(int64(tagSize-8), io.SeekCurrent)
+			tempBuf, err := createBufByTag(r, cBuf, tagSize)
+			if err != nil {
+				return nil, err
+			}
+			list = append(list, &TagBufInfo{tag, tempBuf})
 		}
 	}
 	udtaBuf, newMetaSize := createUdta(tagInfo)
 	if needUpdateStco {
 		trakBuf = modifyStco(trakBuf, newMetaSize-metaSize)
+		for _, b := range list {
+			if b.TagName == "trak" {
+				b.Buf = trakBuf
+			}
+		}
 	}
-	moovLength := mvhdBuf.Len() + trakBuf.Len() + udtaBuf.Len() + 8
+
+	// moovLength := mvhdBuf.Len() + trakBuf.Len() + udtaBuf.Len() + 8
+	moovLength := 8
+	for _, b := range list {
+		moovLength = moovLength + b.Buf.Len()
+	}
+	moovLength = moovLength + udtaBuf.Len()
 	moovBuf := bytes.NewBuffer(int2Bytes(moovLength))
 	moovBuf.WriteString("moov")
-	moovBuf.Write(mvhdBuf.Bytes())
-	moovBuf.Write(trakBuf.Bytes())
+	for _, b := range list {
+		moovBuf.Write(b.Buf.Bytes())
+	}
+	// moovBuf.Write(mvhdBuf.Bytes())
+	// moovBuf.Write(trakBuf.Bytes())
 	moovBuf.Write(udtaBuf.Bytes())
 	return moovBuf, nil
 }
