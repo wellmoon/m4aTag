@@ -233,13 +233,14 @@ func createMoov(moov *bytes.Buffer, filePath string, tagInfo TagInfo, createNewF
 			// skip this tag
 			if tag == "meta" {
 				metaSize = tagSize
+				r.Seek(int64(tagSize-8), io.SeekCurrent)
+			} else {
+				tempBuf, err := createBufByTag(r, cBuf, tagSize)
+				if err != nil {
+					return nil, err
+				}
+				list = append(list, &TagBufInfo{tag, tempBuf})
 			}
-			// r.Seek(int64(tagSize-8), io.SeekCurrent)
-			tempBuf, err := createBufByTag(r, cBuf, tagSize)
-			if err != nil {
-				return nil, err
-			}
-			list = append(list, &TagBufInfo{tag, tempBuf})
 		}
 	}
 	udtaBuf, newMetaSize := createUdta(tagInfo)
