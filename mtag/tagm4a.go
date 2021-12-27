@@ -180,6 +180,9 @@ func SplitTopTag(r io.ReadSeeker) ([]*TagBufInfo, error) {
 }
 
 func createBufByTag(r io.ReadSeeker, tagName []byte, tagSize int) (*bytes.Buffer, error) {
+	if tagSize > 500*1000000 {
+		return nil, errors.New("makeslice: len out of range")
+	}
 	b := bytes.NewBuffer(int2Bytes(tagSize))
 	b.Write(tagName)
 	t := make([]byte, tagSize-8)
