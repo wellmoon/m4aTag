@@ -23,8 +23,8 @@ type TagBufInfo struct {
 	Buf     *bytes.Buffer
 }
 
-// createNewFile : true-rewrite old file, false-rename old file with .old suffix
-func UpdateM4aTag(createNewFile bool, filePath string, title string, artist string, album string, comment string, picPath string) error {
+// overwrite : true - modify old file, false - rename old file with .old suffix
+func UpdateM4aTag(overwrite bool, filePath string, title string, artist string, album string, comment string, picPath string) error {
 	//ftyp
 	//moov
 	//- mvhd
@@ -74,7 +74,7 @@ func UpdateM4aTag(createNewFile bool, filePath string, title string, artist stri
 		return err
 	}
 
-	if createNewFile {
+	if overwrite {
 		err = os.Remove(filePath)
 	} else {
 		err = os.Rename(filePath, filePath+".old")
@@ -101,7 +101,7 @@ func UpdateM4aTag(createNewFile bool, filePath string, title string, artist stri
 				// mdat tag after moov tag, need update stco
 				needUpdateStco = true
 			}
-			buf, err = createMoov(buf, filePath, *tagInfo, createNewFile, needUpdateStco)
+			buf, err = createMoov(buf, filePath, *tagInfo, needUpdateStco)
 			if err != nil {
 				return err
 			}
@@ -180,21 +180,49 @@ func SplitTopTag(r io.ReadSeeker) ([]*TagBufInfo, error) {
 }
 
 func createBufByTag(r io.ReadSeeker, tagName []byte, tagSize int) (*bytes.Buffer, error) {
-	if tagSize > 500*1000000 {
+	if tagSize > 100*1000000 {
 		return nil, errors.New("makeslice: len out of range")
 	}
 	b := bytes.NewBuffer(int2Bytes(tagSize))
 	b.Write(tagName)
-	t := make([]byte, tagSize-8)
-	_, err := io.ReadFull(r, t)
-	if err != nil {
-		return nil, err
+
+	var t []byte
+	if 128 >= tagSize-8 {
+		t = make([]byte, tagSize-8)
+		_, err := io.ReadFull(r, t)
+		if err != nil {
+			return nil, err
+		}
+		b.Write(t)
+	} else {
+		var from int = 1
+		var delta int = 128
+		for {
+			if from*delta < tagSize-8 {
+				t = make([]byte, delta)
+				_, err := io.ReadFull(r, t)
+				if err != nil {
+					return nil, err
+				}
+				b.Write(t)
+				from++
+			} else {
+				size := tagSize - 8 - (from-1)*delta
+				t = make([]byte, size)
+				_, err := io.ReadFull(r, t)
+				if err != nil {
+					return nil, err
+				}
+				b.Write(t)
+				break
+			}
+		}
 	}
-	b.Write(t)
+
 	return b, nil
 }
 
-func createMoov(moov *bytes.Buffer, filePath string, tagInfo TagInfo, createNewFile bool, needUpdateStco bool) (*bytes.Buffer, error) {
+func createMoov(moov *bytes.Buffer, filePath string, tagInfo TagInfo, needUpdateStco bool) (*bytes.Buffer, error) {
 	var cBuf []byte = make([]byte, 4)
 	var tagSize int
 	var err error
